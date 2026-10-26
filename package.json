@@ -1,6 +1,6 @@
 {
   "name": "acousticalc-audio-analysis",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Essentia.js Web Worker for musical key, tempo, and chord analysis",
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -15,7 +15,7 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "test:k6": "vitest run test/acceptance.test.ts -t K6"
   },
   "dependencies": {

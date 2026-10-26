@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { handleAnalyzeMessage } from '../src/worker.js';
+import { assertJsonSafe, handleAnalyzeMessage } from '../src/worker.js';
 import { __resetEssentiaLoaderForTests } from '../src/essentia-loader.js';
 import type { EssentiaApi } from '../src/essentia-types.js';
 
@@ -32,6 +32,17 @@ describe('worker protocol', () => {
     expect(post.mock.calls.map(([response]) => response.type)).toEqual(['progress', 'error']);
     expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ type: 'error', error: expect.stringMatching(/silencio/i) });
     expect(post.mock.calls.at(-1)?.[0]).not.toHaveProperty('result');
+  });
+
+  it('rejects non-finite, undefined, function and cyclic success payloads', () => {
+    expect(() => assertJsonSafe({ key: { confidence: Number.NaN } })).toThrow(/no finito/);
+    expect(() => assertJsonSafe({ bpm: { value: Number.POSITIVE_INFINITY } })).toThrow(/no finito/);
+    expect(() => assertJsonSafe({ duration: undefined })).toThrow(/no serializable/);
+    expect(() => assertJsonSafe({ callback: () => 1 })).toThrow(/no serializable/);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => assertJsonSafe(cyclic)).toThrow(/cíclica/);
+    expect(() => assertJsonSafe({ key: 'A minor', bpm: 128, chords: null, alternatives: [] })).not.toThrow();
   });
 
   it('maps a non-Error engine failure to a clear, serializable error', async () => {

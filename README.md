@@ -5,10 +5,10 @@ Web Worker de análisis musical con Essentia.js (WASM): detecta tonalidad, tempo
 ## Instalación
 
 ```sh
-npm install acousticalc-audio-analysis
+npm install github:pedroomortee/acousticalc-audio-analysis
 ```
 
-La versión actual contiene el worker en `dist/acousticalc-audio-analysis.worker.js` y el motor estático en `dist/essentia/engine.bin`. Copia **ambos** a una ubicación estática de tu servidor conservando la ruta `essentia/engine.bin` relativa al worker. El host debe servir el binario con un tipo MIME de datos binarios (`application/octet-stream` es suficiente) y permitir que el worker haga `fetch` de ese mismo origen.
+El paquete no se publica en npm; se instala desde el repositorio. La versión actual contiene el worker en `dist/acousticalc-audio-analysis.worker.js` y el motor estático en `dist/essentia/engine.bin`. Copia **ambos** a una ubicación estática de tu servidor conservando la ruta `essentia/engine.bin` relativa al worker. El host debe servir el binario con un tipo MIME de datos binarios (`application/octet-stream` es suficiente) y permitir que el worker haga `fetch` de ese mismo origen.
 
 ## Uso del Worker
 
@@ -25,7 +25,7 @@ const pcm = new Float32Array(/* audio mono a 44 100 Hz */);
 worker.postMessage({ type: 'analyze', pcm, sampleRate: 44100 }, [pcm.buffer]);
 ```
 
-El protocolo recibe `{ type: 'analyze', pcm: Float32Array, sampleRate: 44100 }`. Para audios de más de 60 segundos, por defecto analiza los 60 segundos centrales e incluye un aviso; para analizar todo el audio añade `full: true`. Los acordes se analizan por defecto; añade `withChords: false` para omitirlos. Las respuestas son `progress`, `success` con resultados JSON o `error`; si Essentia no puede determinar tonalidad o BPM, el Worker devuelve un error en lugar de inventar un valor. Si el audio está completamente en silencio (todas las muestras a cero), el Worker devuelve un `error` claro antes de invocar a Essentia, sin estimar tonalidad ni BPM.
+El protocolo recibe `{ type: 'analyze', pcm: Float32Array, sampleRate: 44100 }`. Para audios de más de 90 segundos, por defecto analiza los 60 segundos centrales e incluye un aviso; hasta 90 segundos analiza el audio completo. Para forzar el análisis de todo el audio añade `full: true`. Los acordes se analizan por defecto; añade `withChords: false` para omitirlos. Las respuestas son `progress`, `success` con resultados JSON o `error`; si Essentia no puede determinar tonalidad o BPM, el Worker devuelve un error en lugar de inventar un valor. Si el audio está completamente en silencio (todas las muestras a cero), el Worker devuelve un `error` claro antes de invocar a Essentia, sin estimar tonalidad ni BPM.
 
 Las exportaciones TypeScript de `src/types.ts` definen `AnalyzeRequest`, `WorkerResponse`, `AnalysisResult`, `KeyResult`, `BpmResult` y `ChordResult`.
 

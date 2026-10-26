@@ -5970,7 +5970,8 @@ var require_essentia_wasm_web = __commonJS({
 
 // src/analysis.ts
 var SAMPLE_RATE = 44100;
-var MAX_ANALYSIS_SECONDS = 60;
+var MAX_ANALYSIS_SECONDS = 90;
+var ANALYSIS_WINDOW_SECONDS = 60;
 var FRAME_SIZE = 4096;
 var HOP_SIZE = 2048;
 var PROFILES = ["edma", "temperley", "krumhansl", "bgate"];
@@ -5986,7 +5987,7 @@ function selectAnalysisWindow(pcm, full = false) {
   if (full || inputSeconds <= MAX_ANALYSIS_SECONDS) {
     return { pcm, inputSeconds, startSeconds: 0, usedFullAudio: full };
   }
-  const length = MAX_ANALYSIS_SECONDS * SAMPLE_RATE;
+  const length = ANALYSIS_WINDOW_SECONDS * SAMPLE_RATE;
   const start = Math.floor((pcm.length - length) / 2);
   return {
     pcm: pcm.subarray(start, start + length),
@@ -6060,7 +6061,9 @@ function keyNames(tonic, mode) {
 }
 function keyScore(chroma, tonic, mode) {
   const profile = rotateProfile(mode === "major" ? MAJOR_PROFILE : MINOR_PROFILE, tonic);
-  return 0.5 * Math.max(0, pearson(chroma, profile)) + 0.32 * chroma[tonic] + 0.18 * chroma[(tonic + (mode === "major" ? 4 : 3)) % 12] + 0.15 * chroma[(tonic + 7) % 12] + 0.05 * chroma[(tonic + 11) % 12];
+  const third = chroma[(tonic + (mode === "major" ? 4 : 3)) % 12];
+  const fifth = chroma[(tonic + 7) % 12];
+  return 0.5 * Math.max(0, pearson(chroma, profile)) + 0.32 * (chroma[tonic] + third + fifth) + 0.18 * chroma[tonic] + (mode === "minor" ? 0.05 * chroma[(tonic + 11) % 12] : 0);
 }
 function disambiguationCandidates(key) {
   const tonic = pitchIndex(key.tonic);
@@ -6095,22 +6098,26 @@ function buildKeyResult(ranking, chroma, totalVotes) {
     return { tonic, mode: candidate.mode, score: keyScore(chroma, candidate.tonic, candidate.mode), weight: rankedCandidate?.weight ?? 0, reason: candidate.reason };
   }).sort((a, b) => b.score - a.score);
   const best = options[0];
-  const firstPhrase = ranking.find((item) => item.votes >= 4);
-  const relativeMinorOfDominant = firstPhrase?.mode === "minor" && winner.mode === "major" && pitchIndex(winner.tonic) === (pitchIndex(firstPhrase.tonic) + 3) % 12 && firstPhrase.votes >= winner.votes * 0.35 && firstPhrase.weight >= winner.weight * 0.45;
-  const correctionCandidates = options.filter((candidate) => candidate.reason);
-  const bestCorrection = correctionCandidates.sort((a, b) => b.score - a.score)[0];
-  const supportedCorrection = bestCorrection && ranked.find((item) => item.tonic === bestCorrection.tonic && item.mode === bestCorrection.mode);
-  const corrected = relativeMinorOfDominant ? options.find((candidate) => candidate.tonic === firstPhrase.tonic && candidate.mode === "minor") : supportedCorrection && supportedCorrection.weight >= winner.weight * 0.8 && bestCorrection.score >= winnerScore + 0.03 ? bestCorrection : void 0;
-  const selectedOption = corrected ?? best;
-  const matching = corrected ? ranked.find((item) => item.tonic === selectedOption.tonic && item.mode === selectedOption.mode) : winner;
-  const chromaWinner = options[0];
-  const algorithmCandidate = ranking.find((item) => item.tonic === chromaWinner.tonic && item.mode === chromaWinner.mode);
-  const selected = matching ?? algorithmCandidate ?? { tonic: selectedOption.tonic, mode: selectedOption.mode, weight: selectedOption.weight, votes: 0, ...keyNames(selectedOption.tonic, selectedOption.mode) };
+  const bestSupport = best?.reason ? ranked.find((item) => item.tonic === best.tonic && item.mode === best.mode) : void 0;
+  const corrected = best.reason && best.score >= winnerScore + 0.03 && bestSupport && bestSupport.weight >= winner.weight * 0.8 ? best : void 0;
+  const selected = corrected ? ranked.find((item) => item.tonic === corrected.tonic && item.mode === corrected.mode) ?? { tonic: corrected.tonic, mode: corrected.mode, weight: corrected.weight, votes: 0, ...keyNames(corrected.tonic, corrected.mode) } : winner;
   const secondWeight = ranked[1]?.weight ?? 0;
   const agreement = totalVotes ? winner.votes / totalVotes : 0;
   const separation = secondWeight > 0 ? Math.min(1, (winner.weight / secondWeight - 1) * 0.8) : 1;
   const confidence = Math.max(0, Math.min(1, 0.45 * separation + 0.35 * agreement + 0.2 * Math.min(1, winner.votes / 6))) * (corrected ? 0.92 : 1);
-  const alternatives = ranking.filter((item) => item.tonic !== selected.tonic || item.mode !== selected.mode).slice(0, 3).map(({ tonic, mode, weight }) => ({ tonic, mode, ...keyNames(tonic, mode), weight }));
+  const alternatives = [];
+  const addAlternative = (item) => {
+    if (keyIdentity(item.tonic, item.mode) === keyIdentity(selected.tonic, selected.mode)) return;
+    if (alternatives.some((candidate) => keyIdentity(candidate.tonic, candidate.mode) === keyIdentity(item.tonic, item.mode))) return;
+    alternatives.push({ tonic: item.tonic, mode: item.mode, ...keyNames(item.tonic, item.mode), weight: item.weight });
+  };
+  const relativeTonic = PITCHES[(pitchIndex(selected.tonic) + (selected.mode === "major" ? 9 : 3)) % 12];
+  const relativeMode = selected.mode === "major" ? "minor" : "major";
+  addAlternative(ranking.find((item) => item.tonic === relativeTonic && item.mode === relativeMode) ?? { tonic: relativeTonic, mode: relativeMode, weight: 0 });
+  for (const item of ranking) {
+    if (alternatives.length >= 3) break;
+    addAlternative(item);
+  }
   return {
     tonic: selected.tonic,
     mode: selected.mode,
@@ -6118,7 +6125,7 @@ function buildKeyResult(ranking, chroma, totalVotes) {
     weight: selected.weight,
     confidence,
     confidenceLabel: confidence >= 0.75 ? "Alta" : confidence >= 0.5 ? "Media" : "Baja",
-    ...corrected && selectedOption.reason ? { correction: selectedOption.reason } : {},
+    ...corrected?.reason ? { correction: corrected.reason } : {},
     alternatives
   };
 }
@@ -6149,15 +6156,15 @@ function getHpcpFrames(essentia, pcm, tuning) {
       let peaks;
       let hpcp;
       try {
-        windowed = essentia.Windowing(frame, true, FRAME_SIZE, "hann", 0, true);
+        windowed = essentia.Windowing(frame, true, FRAME_SIZE, "blackmanharris62", 0, true);
         spectrum = essentia.Spectrum(windowed.frame, FRAME_SIZE);
         peaks = essentia.SpectralPeaks(spectrum.spectrum, 0, 5e3, 100, 40, "magnitude", SAMPLE_RATE);
         hpcp = essentia.HPCP(
           peaks.frequencies,
           peaks.magnitudes,
-          false,
+          true,
           500,
-          0,
+          4,
           5e3,
           false,
           40,
@@ -6166,7 +6173,7 @@ function getHpcpFrames(essentia, pcm, tuning) {
           tuning,
           SAMPLE_RATE,
           36,
-          "squaredCosine",
+          "cosine",
           1
         );
         const values = Array.from(essentia.module.vectorToArray(hpcp.hpcp));
@@ -6195,18 +6202,17 @@ function getHpcpFrames(essentia, pcm, tuning) {
 }
 function estimateKey(essentia, pcm, signal, tuning) {
   const { frames, global } = getHpcpFrames(essentia, pcm, tuning);
-  const segmentSize = Math.floor(3 * SAMPLE_RATE / HOP_SIZE);
+  const segmentSize = Math.floor(15 * SAMPLE_RATE / HOP_SIZE);
   const votes = /* @__PURE__ */ new Map();
-  const sectionChromas = [];
   let totalVotes = 0;
   const register = (rawKey, rawScale, rawStrength, weightMultiplier = 1) => {
     const tonic = normalizedPitch(String(rawKey ?? ""));
     const mode = modeOf(String(rawScale ?? ""));
-    const strength = finiteNumber(rawStrength) ?? 0;
-    if (pitchIndex(tonic) < 0 || !mode || strength <= 0) return;
+    const strength = Math.max(0, finiteNumber(rawStrength) ?? 0);
+    if (pitchIndex(tonic) < 0 || !mode) return;
     const id = keyIdentity(tonic, mode);
     const vote = votes.get(id) ?? { tonic, mode, weight: 0, votes: 0 };
-    vote.weight += Math.max(0, strength) * weightMultiplier;
+    vote.weight += strength * weightMultiplier;
     vote.votes++;
     votes.set(id, vote);
     totalVotes++;
@@ -6235,15 +6241,13 @@ function estimateKey(essentia, pcm, signal, tuning) {
   for (let start = 0; start < frames.length; start += segmentSize) {
     const section = frames.slice(start, start + segmentSize);
     if (section.length < 4) continue;
-    const mean = Array.from({ length: 36 }, (_, bin) => section.reduce((sum2, frame) => sum2 + frame[bin], 0) / section.length);
-    sectionChromas.push(mean);
     voteSection(section);
   }
   voteSection(frames.slice(0, Math.ceil(0.75 * SAMPLE_RATE / HOP_SIZE)), 4);
   for (const profile of PROFILES) {
-    const result = essentia.KeyExtractor(signal, true, FRAME_SIZE, HOP_SIZE, 36, 5e3, 60, 25, 0.2, profile, SAMPLE_RATE, 1e-4, tuning, "cosine", "hann");
+    const result = essentia.KeyExtractor(signal, true, FRAME_SIZE, HOP_SIZE, 36, 5e3, 60, 25, 0.2, profile, SAMPLE_RATE, 1, tuning, "cosine", "hann");
     try {
-      register(scalar(essentia, result.key), scalar(essentia, result.scale), scalar(essentia, result.strength), 0.5);
+      register(scalar(essentia, result.key), scalar(essentia, result.scale), scalar(essentia, result.strength));
     } finally {
       dispose(result.key);
       dispose(result.scale);
@@ -6252,14 +6256,10 @@ function estimateKey(essentia, pcm, signal, tuning) {
   }
   if (!votes.size) throw new Error("No se ha podido determinar la tonalidad de este audio.");
   const ranking = [...votes.values()].sort((a, b) => b.weight - a.weight || b.votes - a.votes);
+  if (!(ranking[0].weight > 0)) throw new Error("No se ha podido determinar la tonalidad de este audio.");
   const chroma = Array.from({ length: 12 }, () => 0);
   global.forEach((value, bin) => {
-    chroma[(Math.floor(bin / 3) + 9) % 12] += value;
-  });
-  const sectionChroma = sectionChromas.at(-1);
-  const keyChroma = sectionChroma ?? global;
-  keyChroma.forEach((value, bin) => {
-    chroma[(Math.floor(bin / 3) + 9) % 12] += sectionChroma ? value : 0;
+    chroma[(Math.round(bin / 3) + 9) % 12] += value;
   });
   const sum = chroma.reduce((total, value) => total + value, 0);
   if (sum > 0) chroma.forEach((value, index) => {
@@ -6304,7 +6304,7 @@ function hasStrongHalfBeatOnsets(pcm, ticks) {
     midbeats += onsetStrengthNear(values, hopSeconds, ticks[index] + interval / 2);
     count++;
   }
-  return count >= 4 && beats > 0 && midbeats / beats >= 0.5;
+  return count >= 4 && beats > 0 && midbeats / beats >= 0.8;
 }
 function bpmConfidenceLabel(confidence) {
   if (confidence < 1) return "muy baja";
@@ -6314,12 +6314,10 @@ function bpmConfidenceLabel(confidence) {
 }
 function estimateBpm(essentia, signal, pcm, startSeconds) {
   let percival = 0;
-  let percivalValid = false;
   let rhythm;
   try {
     const result = essentia.PercivalBpmEstimator(signal, 1024, 2048, 128, 256, 210, 50, SAMPLE_RATE);
     percival = finiteNumber(scalar(essentia, result.bpm)) ?? 0;
-    percivalValid = percival > 0;
     dispose(result.bpm);
   } catch {
     percival = 0;
@@ -6329,54 +6327,51 @@ function estimateBpm(essentia, signal, pcm, startSeconds) {
   } catch {
     rhythm = void 0;
   }
-  const baseRhythmBpm = finiteNumber(scalar(essentia, rhythm?.bpm)) ?? 0;
-  const rhythmBpm = baseRhythmBpm > 0 ? baseRhythmBpm : 0;
-  const rhythmConfidence = Math.max(0, finiteNumber(scalar(essentia, rhythm?.confidence)) ?? 0);
-  const rhythmEstimatesRaw = rhythm?.estimates;
-  const rhythmEstimates = rhythmEstimatesRaw && typeof rhythmEstimatesRaw === "object" && "size" in rhythmEstimatesRaw ? Array.from(essentia.module.vectorToArray(rhythmEstimatesRaw)).filter((value) => value > 0) : [];
-  const rhythmSpread = rhythmEstimates.length > 1 ? (Math.max(...rhythmEstimates) - Math.min(...rhythmEstimates)) / (rhythmEstimates.reduce((sum, value) => sum + value, 0) / rhythmEstimates.length) : Infinity;
-  const ratio = percival > 0 && rhythmBpm > 0 ? percival / rhythmBpm : 0;
-  const agree = ratio >= 0.95 && ratio <= 1.05;
-  let chosen = 0;
-  if (percival > 0 && rhythmBpm > 0) {
-    if (agree || ratio >= 1.9 && ratio <= 2.1 || ratio >= 0.45 && ratio <= 0.55) chosen = rhythmBpm;
-    else {
-      const percivalScore = (percival >= 60 && percival <= 180 ? 1 : 0.5) + (percivalValid ? 0.25 : 0);
-      const rhythmScore = (rhythmBpm >= 60 && rhythmBpm <= 180 ? 1 : 0.5) + rhythmConfidence;
-      chosen = rhythmSpread < 0.05 && percival >= 50 && percival <= 210 && Math.abs(percival - rhythmBpm) > 10 ? percival : rhythmScore >= percivalScore ? rhythmBpm : percival;
+  try {
+    const baseRhythmBpm = finiteNumber(scalar(essentia, rhythm?.bpm)) ?? 0;
+    const rhythmBpm = baseRhythmBpm > 0 ? baseRhythmBpm : 0;
+    const rhythmConfidence = Math.max(0, finiteNumber(scalar(essentia, rhythm?.confidence)) ?? 0);
+    const ratio = percival > 0 && rhythmBpm > 0 ? percival / rhythmBpm : 0;
+    const agree = ratio >= 0.95 && ratio <= 1.05;
+    let chosen = 0;
+    if (percival > 0 && rhythmBpm > 0) {
+      if (agree || ratio >= 1.9 && ratio <= 2.1 || ratio >= 0.45 && ratio <= 0.55) chosen = rhythmBpm;
+      else {
+        const percivalScore = percival >= 60 && percival <= 180 ? 1 : 0.5;
+        const rhythmScore = (rhythmBpm >= 60 && rhythmBpm <= 180 ? 1 : 0.5) + rhythmConfidence;
+        chosen = rhythmScore >= percivalScore ? rhythmBpm : percival;
+      }
+    } else chosen = rhythmBpm > 0 ? rhythmBpm : percival;
+    if (!Number.isFinite(chosen) || chosen <= 0) {
+      throw new Error("No se ha podido determinar el tempo de este audio.");
     }
-  } else chosen = rhythmBpm > 0 ? rhythmBpm : percival;
-  if (!Number.isFinite(chosen) || chosen <= 0) {
+    if (chosen > 180 && chosen / 2 >= 60) chosen /= 2;
+    if (chosen < 50 && chosen * 2 <= 210) chosen *= 2;
+    const ticksOutput = rhythm?.ticks;
+    let ticks = ticksOutput && typeof ticksOutput === "object" && "size" in ticksOutput ? Array.from(essentia.module.vectorToArray(ticksOutput)).filter(Number.isFinite) : [];
+    if (chosen >= 60 && chosen < 100 && hasStrongHalfBeatOnsets(pcm, ticks)) {
+      chosen *= 2;
+      ticks = ticks.flatMap((time, index) => index < ticks.length - 1 ? [time, (time + ticks[index + 1]) / 2] : [time]).sort((a, b) => a - b);
+    }
+    ticks = ticks.map((time) => time + startSeconds);
+    let confidenceLabel = bpmConfidenceLabel(rhythmConfidence);
+    if (agree) confidenceLabel = confidenceLabel === "muy baja" ? "baja" : confidenceLabel === "baja" ? "buena" : "excelente";
+    return {
+      bpm: chosen,
+      rounded: Math.round(chosen),
+      confidence: Math.max(0, Math.min(1, rhythmConfidence / 5.32)),
+      confidenceLabel,
+      estimatorsAgree: agree,
+      alternateBpm: chosen < 100 ? chosen * 2 : chosen / 2,
+      ticks
+    };
+  } finally {
     dispose(rhythm?.bpm);
     dispose(rhythm?.confidence);
     dispose(rhythm?.ticks);
-    throw new Error("No se ha podido determinar el tempo de este audio.");
+    dispose(rhythm?.estimates);
+    dispose(rhythm?.bpmIntervals);
   }
-  if (chosen > 180 && chosen / 2 >= 60) chosen /= 2;
-  if (chosen < 50 && chosen * 2 <= 210) chosen *= 2;
-  const ticksOutput = rhythm?.ticks;
-  let ticks = ticksOutput && typeof ticksOutput === "object" && "size" in ticksOutput ? Array.from(essentia.module.vectorToArray(ticksOutput)).filter(Number.isFinite) : [];
-  if (chosen >= 60 && chosen < 100 && hasStrongHalfBeatOnsets(pcm, ticks)) {
-    chosen *= 2;
-    ticks = ticks.flatMap((time, index) => index < ticks.length - 1 ? [time, (time + ticks[index + 1]) / 2] : [time]).sort((a, b) => a - b);
-  }
-  ticks = ticks.map((time) => time + startSeconds);
-  let confidenceLabel = bpmConfidenceLabel(rhythmConfidence);
-  if (agree) confidenceLabel = confidenceLabel === "muy baja" ? "baja" : confidenceLabel === "baja" ? "buena" : "excelente";
-  dispose(rhythm?.bpm);
-  dispose(rhythm?.confidence);
-  dispose(rhythm?.estimates);
-  dispose(rhythm?.bpmIntervals);
-  dispose(ticksOutput);
-  return {
-    bpm: chosen,
-    rounded: Math.round(chosen),
-    confidence: Math.max(0, Math.min(1, rhythmConfidence / 5.32)),
-    confidenceLabel,
-    estimatorsAgree: agree,
-    alternateBpm: chosen < 100 ? chosen * 2 : chosen / 2,
-    ticks
-  };
 }
 function lowPassDecimate4(pcm) {
   const taps = new Float64Array(129);
@@ -6418,7 +6413,7 @@ function diatonicChords(key) {
   const minorDegrees = key.mode === "major" ? /* @__PURE__ */ new Set([1, 2, 5]) : /* @__PURE__ */ new Set([0, 3, 4]);
   return new Set(intervals.map((interval, degree) => `${PITCHES[(tonic + interval) % 12]}${minorDegrees.has(degree) ? "m" : ""}`));
 }
-function estimateChords(essentia, pcm, key, startSeconds, ticks) {
+function estimateChords(essentia, pcm, key, startSeconds) {
   const decimated = lowPassDecimate4(pcm);
   const sampleRate = SAMPLE_RATE / 4;
   const frameSize = 4096;
@@ -6431,14 +6426,14 @@ function estimateChords(essentia, pcm, key, startSeconds, ticks) {
   let chromaMatrix;
   let bassMatrix;
   let chordsResult;
-  const ownedVectors = /* @__PURE__ */ new Set();
   const chromaFrames = [];
   try {
     beatSignal = essentia.arrayToVector(pcm);
-    beatResult = essentia.BeatTrackerMultiFeature(beatSignal, 210, 40);
+    beatResult = essentia.BeatTrackerMultiFeature(beatSignal);
     const beatValue = beatResult.ticks;
     const beatTimes = beatValue && typeof beatValue === "object" && "size" in beatValue ? Array.from(essentia.module.vectorToArray(beatValue)) : [];
-    if (beatTimes.length < 2 && ticks.length < 2) throw new Error("No se han podido detectar suficientes pulsos para obtener acordes.");
+    if (beatTimes.length < 2) throw new Error("No se han podido detectar suficientes pulsos para obtener acordes.");
+    const beatGrid = beatTimes.map((time) => time + startSeconds);
     for (let start = 0; start + frameSize <= decimated.length; start += frameSize) {
       const frame = essentia.arrayToVector(decimated.subarray(start, start + frameSize));
       let windowed;
@@ -6460,7 +6455,7 @@ function estimateChords(essentia, pcm, key, startSeconds, ticks) {
         dispose(log?.localTuning);
       }
     }
-    if (!logFrames.length) throw new Error("El audio es demasiado corto para identificar acordes.");
+    if (logFrames.length < 2) throw new Error("El audio es demasiado corto para identificar acordes.");
     spectraMatrix = new essentia.module.VectorVectorFloat();
     const spectraRows = [];
     logFrames.forEach((frame) => {
@@ -6472,22 +6467,29 @@ function estimateChords(essentia, pcm, key, startSeconds, ticks) {
     const locals = essentia.arrayToVector(localTuning);
     let nnls;
     try {
-      nnls = essentia.NNLSChroma(spectraMatrix, means, locals, "none", 2049, sampleRate, 0.7, 1, "local", false);
+      nnls = essentia.NNLSChroma(spectraMatrix, means, locals, "none", 2049, sampleRate, 0.7, 1, "global", false);
       chromaMatrix = nnls.chromagram;
       bassMatrix = nnls.bassChromagram;
       const hpcpFrames = new essentia.module.VectorVectorFloat();
       const hpcpRows = [];
       try {
         for (let index = 0; index < chromaMatrix.size(); index++) {
-          const chroma = Array.from(essentia.module.vectorToArray(chromaMatrix.get(index)));
-          const bass = bassMatrix && index < bassMatrix.size() ? Array.from(essentia.module.vectorToArray(bassMatrix.get(index))) : [];
-          chromaFrames.push(chroma);
-          const combined = chroma.map((value, bin) => value + 0.5 * (bass[bin] ?? 0));
-          const maximum = Math.max(...combined);
-          const normalized = maximum ? combined.map((value) => value / maximum) : combined;
-          const vector = essentia.arrayToVector(normalized);
-          hpcpRows.push(vector);
-          hpcpFrames.push_back(vector);
+          const chromaRow = chromaMatrix.get(index);
+          const bassRow = bassMatrix && index < bassMatrix.size() ? bassMatrix.get(index) : void 0;
+          try {
+            const chroma = Array.from(essentia.module.vectorToArray(chromaRow));
+            const bass = bassRow ? Array.from(essentia.module.vectorToArray(bassRow)) : [];
+            chromaFrames.push(chroma);
+            const combined = chroma.map((value, bin) => value + 0.5 * (bass[bin] ?? 0));
+            const maximum = Math.max(...combined);
+            const normalized = maximum ? combined.map((value) => value / maximum) : combined;
+            const vector = essentia.arrayToVector(normalized);
+            hpcpRows.push(vector);
+            hpcpFrames.push_back(vector);
+          } finally {
+            dispose(chromaRow);
+            dispose(bassRow);
+          }
         }
         chordsResult = essentia.ChordsDetection(hpcpFrames, frameSize, sampleRate, 4);
       } finally {
@@ -6497,6 +6499,8 @@ function estimateChords(essentia, pcm, key, startSeconds, ticks) {
     } finally {
       dispose(nnls?.chromagram);
       dispose(nnls?.bassChromagram);
+      dispose(nnls?.tunedLogfreqSpectrum);
+      dispose(nnls?.semitoneSpectrum);
       chromaMatrix = void 0;
       bassMatrix = void 0;
       dispose(spectraMatrix);
@@ -6510,6 +6514,7 @@ function estimateChords(essentia, pcm, key, startSeconds, ticks) {
     const strengthVector = chordsResult.strength;
     const strengths = strengthVector && typeof strengthVector === "object" && "size" in strengthVector ? Array.from(essentia.module.vectorToArray(strengthVector)) : [];
     const names = chordNames && typeof chordNames === "object" && "size" in chordNames && typeof chordNames.get === "function" ? Array.from({ length: chordNames.size() }, (_, index) => chordNames.get(index)) : Array.isArray(chordNames) ? [...chordNames] : [];
+    if (strengths.some((value) => !Number.isFinite(value))) throw new Error("El an\xE1lisis de acordes produjo una confianza no v\xE1lida.");
     const count = Math.min(names.length, strengths.length);
     const times = Array.from({ length: count }, (_, index) => Math.max(0, (frameSize * index + frameSize / 2 - frameSize) / sampleRate));
     const spans = [];
@@ -6521,9 +6526,11 @@ function estimateChords(essentia, pcm, key, startSeconds, ticks) {
       if (previous && previous.chord === chord) {
         previous.end = end;
         previous.strength = Math.max(previous.strength, strengths[index]);
+        const mergedEndBeat = nearestBeat(end, beatGrid);
+        if (mergedEndBeat !== void 0) previous.endBeat = mergedEndBeat;
       } else {
-        const startBeat = nearestBeat(begin, ticks);
-        const endBeat = nearestBeat(end, ticks);
+        const startBeat = nearestBeat(begin, beatGrid);
+        const endBeat = nearestBeat(end, beatGrid);
         spans.push({ chord, start: begin, end, strength: strengths[index], ...startBeat !== void 0 ? { startBeat } : {}, ...endBeat !== void 0 ? { endBeat } : {} });
       }
     }
@@ -6533,6 +6540,7 @@ function estimateChords(essentia, pcm, key, startSeconds, ticks) {
       const total = values.reduce((frameSum, value) => frameSum + value, 0);
       return sum + (total ? sorted.slice(0, 3).reduce((frameSum, value) => frameSum + value, 0) / total : 0);
     }, 0) / count : 0;
+    if (!Number.isFinite(confidence) || !Number.isFinite(clarity)) throw new Error("El an\xE1lisis de acordes produjo m\xE9tricas no v\xE1lidas.");
     const totalDuration = spans.reduce((sum, span) => sum + span.end - span.start, 0);
     const diatonic = diatonicChords(key);
     const diatonicDuration = spans.reduce((sum, span) => sum + (diatonic.has(span.chord) ? span.end - span.start : 0), 0);
@@ -6577,7 +6585,7 @@ async function analyzePcm(essentia, pcm, options = {}, onProgress = () => {
     let chords;
     if (options.withChords !== false) {
       onProgress({ stage: "chords", message: "Leyendo la armon\xEDa\u2026", progress: 0.75 });
-      chords = estimateChords(essentia, selection.pcm, key, selection.startSeconds, bpm.ticks);
+      chords = estimateChords(essentia, selection.pcm, key, selection.startSeconds);
     }
     return {
       key,
@@ -9747,24 +9755,26 @@ var loading = null;
 var lastFailure = 0;
 var factoryOverride = null;
 async function createEssentia() {
+  const documentShim = typeof document === "undefined" ? { currentScript: null, createElement: () => ({}) } : document;
   if (typeof document === "undefined") {
-    Object.defineProperty(globalThis, "document", {
-      configurable: true,
-      value: { currentScript: null, createElement: () => ({}) }
-    });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: documentShim });
+  }
+  if (typeof window === "undefined") {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { document: documentShim } });
   }
   const url = new URL("./essentia/engine.bin", import.meta.url);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Essentia WASM request failed (${response.status})`);
   const wasmBinary = await response.arrayBuffer();
-  const wasmModule = await (0, import_essentia_wasm_web.default)({ wasmBinary, locateFile: (file) => file });
+  const wasmModule = await (0, import_essentia_wasm_web.default)({ wasmBinary, locateFile: (file) => file, print: () => {
+  } });
   return new essentia_js_core_es_default(wasmModule, false);
 }
 function loadEssentia() {
   if (instance) return Promise.resolve(instance);
   if (loading) return loading;
   if (lastFailure && Date.now() - lastFailure < FAILURE_COOLDOWN_MS) {
-    return Promise.reject(new Error("Essentia.js initialization is cooling down after a previous failure."));
+    return Promise.reject(new Error("El motor de an\xE1lisis est\xE1 en espera tras un fallo. Vuelve a intentarlo en unos segundos."));
   }
   const attempt = (factoryOverride ?? createEssentia)();
   loading = attempt.then(
@@ -9790,8 +9800,27 @@ function loadEssentia() {
 var workerScope = globalThis;
 var isWorker = typeof workerScope.postMessage === "function" && typeof document === "undefined";
 function errorMessage(error) {
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error && error.message.trim()) return error.message;
   return "El motor de an\xE1lisis no pudo procesar el audio. Comprueba que la se\xF1al no est\xE9 da\xF1ada.";
+}
+function assertJsonSafe(value, path = "result", seen = /* @__PURE__ */ new Set()) {
+  if (value === null) return;
+  const type = typeof value;
+  if (type === "number") {
+    if (!Number.isFinite(value)) throw new Error(`El an\xE1lisis produjo un valor no finito en ${path}.`);
+    return;
+  }
+  if (type === "string" || type === "boolean") return;
+  if (type !== "object") throw new Error(`El an\xE1lisis produjo un valor no serializable en ${path}.`);
+  const object = value;
+  if (seen.has(object)) throw new Error(`El an\xE1lisis produjo una estructura c\xEDclica en ${path}.`);
+  seen.add(object);
+  if (Array.isArray(object)) {
+    object.forEach((item, index) => assertJsonSafe(item, `${path}[${index}]`, seen));
+  } else {
+    for (const [key, item] of Object.entries(object)) assertJsonSafe(item, `${path}.${key}`, seen);
+  }
+  seen.delete(object);
 }
 async function handleAnalyzeMessage(message, post) {
   if (!message || typeof message !== "object" || !("type" in message) || message.type !== "analyze") {
@@ -9813,6 +9842,7 @@ async function handleAnalyzeMessage(message, post) {
     const result = await analyzePcm(essentia, request.pcm, request, (event) => {
       post({ type: "progress", ...event });
     });
+    assertJsonSafe(result);
     post({ type: "success", result: JSON.parse(JSON.stringify(result)) });
   } catch (error) {
     post({ type: "error", error: errorMessage(error) });
@@ -9824,5 +9854,6 @@ if (isWorker) {
   };
 }
 export {
+  assertJsonSafe,
   handleAnalyzeMessage
 };

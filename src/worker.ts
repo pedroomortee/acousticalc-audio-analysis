@@ -11,8 +11,28 @@ const workerScope = globalThis as unknown as WorkerScope;
 const isWorker = typeof workerScope.postMessage === 'function' && typeof document === 'undefined';
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error && error.message.trim()) return error.message;
   return 'El motor de análisis no pudo procesar el audio. Comprueba que la señal no esté dañada.';
+}
+
+export function assertJsonSafe(value: unknown, path = 'result', seen = new Set<object>()): void {
+  if (value === null) return;
+  const type = typeof value;
+  if (type === 'number') {
+    if (!Number.isFinite(value)) throw new Error(`El análisis produjo un valor no finito en ${path}.`);
+    return;
+  }
+  if (type === 'string' || type === 'boolean') return;
+  if (type !== 'object') throw new Error(`El análisis produjo un valor no serializable en ${path}.`);
+  const object = value as Record<string, unknown>;
+  if (seen.has(object)) throw new Error(`El análisis produjo una estructura cíclica en ${path}.`);
+  seen.add(object);
+  if (Array.isArray(object)) {
+    object.forEach((item, index) => assertJsonSafe(item, `${path}[${index}]`, seen));
+  } else {
+    for (const [key, item] of Object.entries(object)) assertJsonSafe(item, `${path}.${key}`, seen);
+  }
+  seen.delete(object);
 }
 
 export async function handleAnalyzeMessage(message: unknown, post: (response: WorkerResponse) => void): Promise<void> {
@@ -35,6 +55,7 @@ export async function handleAnalyzeMessage(message: unknown, post: (response: Wo
     const result = await analyzePcm(essentia, request.pcm, request, (event) => {
       post({ type: 'progress', ...event });
     });
+    assertJsonSafe(result);
     post({ type: 'success', result: JSON.parse(JSON.stringify(result)) as typeof result });
   } catch (error) {
     post({ type: 'error', error: errorMessage(error) });

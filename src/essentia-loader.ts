@@ -9,18 +9,24 @@ let lastFailure = 0;
 let factoryOverride: (() => Promise<EssentiaApi>) | null = null;
 
 async function createEssentia(): Promise<EssentiaApi> {
+  const documentShim = typeof document === 'undefined'
+    ? { currentScript: null, createElement: () => ({}) }
+    : document;
   if (typeof document === 'undefined') {
-    Object.defineProperty(globalThis, 'document', {
-      configurable: true,
-      value: { currentScript: null, createElement: () => ({}) },
-    });
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: documentShim });
+  }
+  // El build essentia-wasm.web.js comprueba el entorno web; en un Web Worker
+  // no existe window y sin este shim aborta con "not compiled for this
+  // environment". No se ejecuta en el hilo principal, así que es seguro.
+  if (typeof window === 'undefined') {
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { document: documentShim } });
   }
 
   const url = new URL('./essentia/engine.bin', import.meta.url);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Essentia WASM request failed (${response.status})`);
   const wasmBinary = await response.arrayBuffer();
-  const wasmModule = await wasmFactory({ wasmBinary, locateFile: (file: string) => file });
+  const wasmModule = await wasmFactory({ wasmBinary, locateFile: (file: string) => file, print: () => {} });
   return new EssentiaCore(wasmModule, false) as unknown as EssentiaApi;
 }
 
@@ -28,7 +34,7 @@ export function loadEssentia(): Promise<EssentiaApi> {
   if (instance) return Promise.resolve(instance);
   if (loading) return loading;
   if (lastFailure && Date.now() - lastFailure < FAILURE_COOLDOWN_MS) {
-    return Promise.reject(new Error('Essentia.js initialization is cooling down after a previous failure.'));
+    return Promise.reject(new Error('El motor de análisis está en espera tras un fallo. Vuelve a intentarlo en unos segundos.'));
   }
 
   const attempt = (factoryOverride ?? createEssentia)();
