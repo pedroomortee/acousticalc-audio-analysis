@@ -29,7 +29,25 @@ describe('worker protocol', () => {
     __resetEssentiaLoaderForTests(async () => fakeEssentia);
     const post = vi.fn();
     await handleAnalyzeMessage({ type: 'analyze', pcm: new Float32Array(88_200), sampleRate: 44_100, withChords: false }, post);
-    expect(post.mock.calls.map(([response]) => response.type)).toEqual(['progress', 'progress', 'error']);
+    expect(post.mock.calls.map(([response]) => response.type)).toEqual(['progress', 'error']);
+    expect(post.mock.calls.at(-1)?.[0]).toMatchObject({ type: 'error', error: expect.stringMatching(/silencio/i) });
     expect(post.mock.calls.at(-1)?.[0]).not.toHaveProperty('result');
+  });
+
+  it('maps a non-Error engine failure to a clear, serializable error', async () => {
+    __resetEssentiaLoaderForTests(async () => ({
+      arrayToVector: () => {
+        throw '6079712 - Exception catching is disabled, this exception cannot be caught.';
+      },
+    }) as unknown as EssentiaApi);
+    const post = vi.fn();
+    await handleAnalyzeMessage(
+      { type: 'analyze', pcm: new Float32Array(44_100).fill(0.1), sampleRate: 44_100, withChords: false },
+      post,
+    );
+    const last = post.mock.calls.at(-1)?.[0];
+    expect(last).toMatchObject({ type: 'error', error: expect.stringMatching(/no pudo procesar/i) });
+    expect(last).not.toHaveProperty('result');
+    expect(JSON.stringify(last)).not.toContain('Exception catching');
   });
 });

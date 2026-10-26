@@ -1,10 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import wasmFactory from 'essentia.js/dist/essentia-wasm.web.js';
 import EssentiaCore from 'essentia.js/dist/essentia.js-core.es.js';
 import { analyzePcm, selectAnalysisWindow } from '../src/analysis.js';
+import { __resetEssentiaLoaderForTests } from '../src/essentia-loader.js';
+import { handleAnalyzeMessage } from '../src/worker.js';
 import type { EssentiaApi, NativeVector } from '../src/essentia-types.js';
 
 const sampleRate = 44_100;
@@ -97,6 +99,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  __resetEssentiaLoaderForTests();
   if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
   else Reflect.deleteProperty(globalThis, 'window');
   if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
@@ -126,7 +129,7 @@ describe('K1–K8 acceptance criteria', () => {
   });
 
   it.each([128, 174, 90])('K1–K3: keeps the fused tempo at %i BPM (174 is not halved to 87)', async (bpm) => {
-    const result = await analyzePcm(fakeEssentia(bpm, 'A', 'minor', aMinorHpcp), new Float32Array(sampleRate), { withChords: false });
+    const result = await analyzePcm(fakeEssentia(bpm, 'A', 'minor', aMinorHpcp), new Float32Array(sampleRate).fill(0.1), { withChords: false });
     expect(result.bpm.bpm).toBe(bpm);
     expect(result.bpm.rounded).toBe(bpm);
   });
@@ -186,13 +189,38 @@ describe('K1–K8 acceptance criteria', () => {
     }
   }, 120_000);
 
-  it('K7: silence returns an error without invented key or BPM values', async () => {
+  it('K7: rejects digital silence before touching Essentia', async () => {
+    const arrayToVector = vi.fn();
+    await expect(analyzePcm(
+      { arrayToVector } as unknown as EssentiaApi,
+      new Float32Array(2 * sampleRate),
+      { withChords: false },
+    )).rejects.toThrow(/silencio/i);
+    expect(arrayToVector).not.toHaveBeenCalled();
+  });
+
+  it('K7: audio without HPCP frames is rejected instead of inventing a key', async () => {
     const silentEssentia = fakeEssentia(0, 'A', 'minor', new Array(36).fill(0));
     const noKey = Object.assign(silentEssentia, {
       FrameGenerator: () => ({ size: () => 0, get: () => vector([]), push_back() {}, delete() {} }),
     });
-    await expect(analyzePcm(noKey, new Float32Array(2 * sampleRate), { withChords: false })).rejects.toThrow(/tonalidad/);
+    await expect(analyzePcm(noKey, new Float32Array(2 * sampleRate).fill(0.01), { withChords: false }))
+      .rejects.toThrow(/tonalidad/);
   });
+
+  it('K7 integration: the worker returns a serializable error for digital silence with the real engine', async () => {
+    __resetEssentiaLoaderForTests(async () => realEssentia);
+    const post = vi.fn();
+    await handleAnalyzeMessage(
+      { type: 'analyze', pcm: new Float32Array(2 * sampleRate), sampleRate, withChords: false },
+      post,
+    );
+    expect(post.mock.calls.map(([response]) => response.type)).toEqual(['progress', 'error']);
+    const last = post.mock.calls.at(-1)?.[0];
+    expect(last).toMatchObject({ type: 'error', error: expect.stringMatching(/silencio/i) });
+    expect(last).not.toHaveProperty('result');
+    expect(() => JSON.stringify(post.mock.calls)).not.toThrow();
+  }, 30_000);
 
   it('K8: uses the centered 60 seconds by default and supports complete analysis', () => {
     const pcm = new Float32Array(600 * sampleRate);

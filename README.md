@@ -25,7 +25,7 @@ const pcm = new Float32Array(/* audio mono a 44 100 Hz */);
 worker.postMessage({ type: 'analyze', pcm, sampleRate: 44100 }, [pcm.buffer]);
 ```
 
-El protocolo recibe `{ type: 'analyze', pcm: Float32Array, sampleRate: 44100 }`. Para audios de más de 60 segundos, por defecto analiza los 60 segundos centrales e incluye un aviso; para analizar todo el audio añade `full: true`. Los acordes se analizan por defecto; añade `withChords: false` para omitirlos. Las respuestas son `progress`, `success` con resultados JSON o `error`; si Essentia no puede determinar tonalidad o BPM, el Worker devuelve un error en lugar de inventar un valor.
+El protocolo recibe `{ type: 'analyze', pcm: Float32Array, sampleRate: 44100 }`. Para audios de más de 60 segundos, por defecto analiza los 60 segundos centrales e incluye un aviso; para analizar todo el audio añade `full: true`. Los acordes se analizan por defecto; añade `withChords: false` para omitirlos. Las respuestas son `progress`, `success` con resultados JSON o `error`; si Essentia no puede determinar tonalidad o BPM, el Worker devuelve un error en lugar de inventar un valor. Si el audio está completamente en silencio (todas las muestras a cero), el Worker devuelve un `error` claro antes de invocar a Essentia, sin estimar tonalidad ni BPM.
 
 Las exportaciones TypeScript de `src/types.ts` definen `AnalyzeRequest`, `WorkerResponse`, `AnalysisResult`, `KeyResult`, `BpmResult` y `ChordResult`.
 

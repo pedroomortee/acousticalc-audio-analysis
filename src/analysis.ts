@@ -610,6 +610,13 @@ function estimateChords(essentia: EssentiaApi, pcm: Float32Array, key: KeyResult
   }
 }
 
+function hasSignal(pcm: Float32Array): boolean {
+  for (let index = 0; index < pcm.length; index++) {
+    if (pcm[index] !== 0) return true;
+  }
+  return false;
+}
+
 export async function analyzePcm(
   essentia: EssentiaApi,
   pcm: Float32Array,
@@ -619,6 +626,7 @@ export async function analyzePcm(
   if (!(pcm instanceof Float32Array) || pcm.length < SAMPLE_RATE) throw new Error('El audio debe contener al menos un segundo de muestras mono Float32.');
   if (pcm.some((value) => !Number.isFinite(value))) throw new Error('El audio contiene muestras no finitas.');
   const selection = selectAnalysisWindow(pcm, options.full);
+  if (!hasSignal(selection.pcm)) throw new Error('El audio está en silencio: no hay señal que analizar.');
   const signal = essentia.arrayToVector(selection.pcm);
   try {
     onProgress({ stage: 'key', message: 'Detectando tonalidad…', progress: 0.15 });

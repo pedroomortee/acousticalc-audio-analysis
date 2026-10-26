@@ -6555,11 +6555,18 @@ function estimateChords(essentia, pcm, key, startSeconds, ticks) {
     dispose(beatSignal);
   }
 }
+function hasSignal(pcm) {
+  for (let index = 0; index < pcm.length; index++) {
+    if (pcm[index] !== 0) return true;
+  }
+  return false;
+}
 async function analyzePcm(essentia, pcm, options = {}, onProgress = () => {
 }) {
   if (!(pcm instanceof Float32Array) || pcm.length < SAMPLE_RATE) throw new Error("El audio debe contener al menos un segundo de muestras mono Float32.");
   if (pcm.some((value) => !Number.isFinite(value))) throw new Error("El audio contiene muestras no finitas.");
   const selection = selectAnalysisWindow(pcm, options.full);
+  if (!hasSignal(selection.pcm)) throw new Error("El audio est\xE1 en silencio: no hay se\xF1al que analizar.");
   const signal = essentia.arrayToVector(selection.pcm);
   try {
     onProgress({ stage: "key", message: "Detectando tonalidad\u2026", progress: 0.15 });
@@ -9782,6 +9789,10 @@ function loadEssentia() {
 // src/worker.ts
 var workerScope = globalThis;
 var isWorker = typeof workerScope.postMessage === "function" && typeof document === "undefined";
+function errorMessage(error) {
+  if (error instanceof Error) return error.message;
+  return "El motor de an\xE1lisis no pudo procesar el audio. Comprueba que la se\xF1al no est\xE9 da\xF1ada.";
+}
 async function handleAnalyzeMessage(message, post) {
   if (!message || typeof message !== "object" || !("type" in message) || message.type !== "analyze") {
     post({ type: "error", error: 'Solicitud no v\xE1lida: se esperaba type="analyze".' });
@@ -9804,7 +9815,7 @@ async function handleAnalyzeMessage(message, post) {
     });
     post({ type: "success", result: JSON.parse(JSON.stringify(result)) });
   } catch (error) {
-    post({ type: "error", error: error instanceof Error ? error.message : "Error desconocido durante el an\xE1lisis." });
+    post({ type: "error", error: errorMessage(error) });
   }
 }
 if (isWorker) {

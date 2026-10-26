@@ -10,6 +10,11 @@ interface WorkerScope {
 const workerScope = globalThis as unknown as WorkerScope;
 const isWorker = typeof workerScope.postMessage === 'function' && typeof document === 'undefined';
 
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return 'El motor de análisis no pudo procesar el audio. Comprueba que la señal no esté dañada.';
+}
+
 export async function handleAnalyzeMessage(message: unknown, post: (response: WorkerResponse) => void): Promise<void> {
   if (!message || typeof message !== 'object' || !('type' in message) || message.type !== 'analyze') {
     post({ type: 'error', error: 'Solicitud no válida: se esperaba type="analyze".' });
@@ -32,7 +37,7 @@ export async function handleAnalyzeMessage(message: unknown, post: (response: Wo
     });
     post({ type: 'success', result: JSON.parse(JSON.stringify(result)) as typeof result });
   } catch (error) {
-    post({ type: 'error', error: error instanceof Error ? error.message : 'Error desconocido durante el análisis.' });
+    post({ type: 'error', error: errorMessage(error) });
   }
 }
 

@@ -29,8 +29,15 @@ describe('analysis input and windows', () => {
     await expect(analyzePcm({} as EssentiaApi, pcm)).rejects.toThrow(/muestras no finitas/);
   });
 
+  it('rejects digital silence before touching Essentia', async () => {
+    const arrayToVector = vi.fn();
+    await expect(analyzePcm({ arrayToVector } as unknown as EssentiaApi, new Float32Array(SR * 2)))
+      .rejects.toThrow(/silencio/i);
+    expect(arrayToVector).not.toHaveBeenCalled();
+  });
+
   it('emits progress messages for key, BPM, and chords on a successful analysis', async () => {
-    const pcm = new Float32Array(SR * 2);
+    const pcm = new Float32Array(SR * 2).fill(0.1);
     const vector = (values: number[]) => ({
       size: () => values.length,
       get: (index: number) => values[index],
