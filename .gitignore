@@ -1,1 +1,3 @@
 node_modules/
+test/k6/generated/
+.k6-work/

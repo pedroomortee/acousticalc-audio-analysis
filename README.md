@@ -40,7 +40,14 @@ npm test
 npm run build
 ```
 
-La suite incluye K1–K5 y K7–K8 con señales sintéticas. K6 requiere diez canciones con tonalidad y tempo verificados manualmente, que no se redistribuyen en este paquete. Consulta [`test/fixtures/README.md`](./test/fixtures/README.md) para ejecutar esa validación con una colección local.
+La suite incluye K1–K5 y K7–K8 con señales sintéticas. K6 usa diez canciones reales con tonalidad y tempo anotados por humanos y fuentes citadas. El corpus público reproducible está en [`test/k6/`](./test/k6/README.md): descarga previews de 30 s de Deezer y los decodifica localmente; el audio no se redistribuye ni se publica en el paquete. Requiere `ffmpeg` y red:
+
+```sh
+node test/k6/build-public-corpus.mjs
+ACOUSTICALC_K6_CORPUS_MODULE=test/k6/generated/corpus.mjs npm run test:k6
+```
+
+Sin ese corpus, K6 se omite con un mensaje que explica cómo construirlo; no se declara pasado. La última validación con el motor real obtuvo 9/10 tonalidades y 10/10 tempos. Consulta [`test/fixtures/README.md`](./test/fixtures/README.md) para usar una colección privada.
 
 El build genera:
 

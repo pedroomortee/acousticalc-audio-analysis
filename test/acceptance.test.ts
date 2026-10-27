@@ -65,7 +65,7 @@ describe('K1–K8 acceptance criteria', () => {
   });
 
   it.skipIf(!k6CorpusModule)(
-    `K6: supports ten manually verified songs supplied by the maintainer${k6CorpusModule ? '' : ' [PENDIENTE POR DATO: define ACOUSTICALC_K6_CORPUS_MODULE]'}`,
+    `K6: supports ten real songs with cited key/BPM annotations (public corpus or maintainer collection)${k6CorpusModule ? '' : ' [PENDIENTE POR DATO: ejecuta "node test/k6/build-public-corpus.mjs" y define ACOUSTICALC_K6_CORPUS_MODULE=test/k6/generated/corpus.mjs]'}`,
     async () => {
       const corpusModule = await import(/* @vite-ignore */ pathToFileURL(resolve(k6CorpusModule!)).href);
       const realCorpus = corpusModule.default as Array<{ pcm: Float32Array; key: string; bpm: number }>;
@@ -89,6 +89,7 @@ describe('K1–K8 acceptance criteria', () => {
         if (bpmMatch) bpmMatches++;
         details.push(`${track.key}/${track.bpm}: detected ${detectedKey}/${result.bpm.bpm.toFixed(1)} (key=${keyMatch}, bpm=${bpmMatch})`);
       }
+      console.log(`K6: ${keyMatches}/10 keys, ${bpmMatches}/10 BPM\n${details.join('\n')}`);
       expect(keyMatches, details.join('\n')).toBeGreaterThanOrEqual(8);
       expect(bpmMatches, details.join('\n')).toBeGreaterThanOrEqual(9);
     },

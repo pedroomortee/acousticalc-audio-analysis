@@ -1,0 +1,92 @@
+[
+  {
+    "artist": "Adele",
+    "title": "Rolling in the Deep",
+    "deezerId": 8086126,
+    "key": "C minor",
+    "bpm": 105,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/adele/rolling-in-the-deep",
+    "sources": "Hooktheory: C minor, 105 BPM. SongBPM: 105 BPM. Deezer: bpm 0 (not provided)."
+  },
+  {
+    "artist": "Coldplay",
+    "title": "Viva la Vida",
+    "deezerId": 3157972,
+    "key": "G# major",
+    "bpm": 138,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/coldplay/viva-la-vida",
+    "sources": "Hooktheory: Ab major, 138 BPM. Deezer: 137.8 BPM. Ab is written G# here (enharmonic)."
+  },
+  {
+    "artist": "Dolly Parton",
+    "title": "Jolene",
+    "deezerId": 114422238,
+    "key": "C# minor",
+    "bpm": 110,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/dolly-parton/jolene",
+    "sources": "Hooktheory: C# minor, 110 BPM. Deezer: 110 BPM."
+  },
+  {
+    "artist": "Eagles",
+    "title": "Hotel California",
+    "deezerId": 426703682,
+    "key": "B minor",
+    "bpm": 147,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/eagles/hotel-california",
+    "sources": "Hooktheory: B minor (12 annotations) and D major (6); 147 BPM. Deezer: 147.1 BPM. The relative D major is accepted by K6."
+  },
+  {
+    "artist": "Earth, Wind & Fire",
+    "title": "September",
+    "deezerId": 487484142,
+    "key": "A major",
+    "bpm": 126,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/earth-wind-and-fire/september",
+    "sources": "Hooktheory: A major, 126 BPM. Deezer: 126.43 BPM."
+  },
+  {
+    "artist": "Ed Sheeran",
+    "title": "Shape of You",
+    "deezerId": 139470659,
+    "key": "C# minor",
+    "bpm": 96,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/ed-sheeran/shape-of-you",
+    "sources": "Hooktheory: C# minor, 96 BPM. Deezer: 95.93 BPM. Wikipedia: C-sharp minor, 96 BPM."
+  },
+  {
+    "artist": "Eminem",
+    "title": "Lose Yourself",
+    "deezerId": 1109731,
+    "key": "D minor",
+    "bpm": 86,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/eminem/lose-yourself",
+    "sources": "Hooktheory: D minor, 86 BPM. Deezer: 171.6 BPM = 2 x 85.8; half/double is accepted by K6."
+  },
+  {
+    "artist": "Fleetwood Mac",
+    "title": "Dreams",
+    "deezerId": 63480987,
+    "key": "A minor",
+    "bpm": 120,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/fleetwood-mac/dreams",
+    "sources": "Hooktheory: A minor, 120-122 BPM. Deezer: 120.2 BPM."
+  },
+  {
+    "artist": "Gnarls Barkley",
+    "title": "Crazy",
+    "deezerId": 2794160,
+    "key": "C minor",
+    "bpm": 112,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/gnarls-barkley/crazy",
+    "sources": "Hooktheory: C minor, 113 BPM. Deezer: 112 BPM. Difference is 1 BPM, inside the K6 tolerance."
+  },
+  {
+    "artist": "John Lennon",
+    "title": "Imagine",
+    "deezerId": 7193834,
+    "key": "C major",
+    "bpm": 76,
+    "hooktheory": "https://www.hooktheory.com/theorytab/view/john-lennon/imagine",
+    "sources": "Hooktheory: C major, 76 BPM. Deezer: 151.4 BPM = 2 x 75.7; half/double is accepted by K6."
+  }
+]

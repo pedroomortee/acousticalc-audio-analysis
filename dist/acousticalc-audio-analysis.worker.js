@@ -6070,15 +6070,10 @@ function disambiguationCandidates(key) {
   const mode = key.mode;
   const relative = (tonic + (mode === "major" ? 9 : 3)) % 12;
   const dominant = (tonic + 7) % 12;
-  const subdominant = (tonic + 5) % 12;
   const candidates = [
     { tonic, mode },
     { tonic: relative, mode: mode === "major" ? "minor" : "major", reason: "relative-correction" },
-    { tonic, mode: mode === "major" ? "minor" : "major", reason: "parallel-correction" },
-    { tonic: dominant, mode, reason: "dominant-correction" },
-    { tonic: (dominant + (mode === "major" ? 9 : 3)) % 12, mode: mode === "major" ? "minor" : "major", reason: "relative-correction" },
-    { tonic: subdominant, mode, reason: "subdominant-correction" },
-    { tonic: (subdominant + (mode === "major" ? 9 : 3)) % 12, mode: mode === "major" ? "minor" : "major", reason: "relative-correction" }
+    { tonic: dominant, mode, reason: "dominant-correction" }
   ];
   const seen = /* @__PURE__ */ new Set();
   return candidates.filter((candidate) => {
@@ -6088,18 +6083,28 @@ function disambiguationCandidates(key) {
     return true;
   });
 }
-function buildKeyResult(ranking, chroma, totalVotes) {
+function buildKeyResult(ranking, chroma, totalVotes, firstSegmentKey) {
   const ranked = ranking.map((item) => ({ ...item, ...keyNames(item.tonic, item.mode) }));
   const winner = ranked[0];
   const winnerScore = keyScore(chroma, pitchIndex(winner.tonic), winner.mode);
+  const priorTonic = PITCHES[(pitchIndex(winner.tonic) + (winner.mode === "major" ? 9 : 3)) % 12];
+  const priorMode = winner.mode === "major" ? "minor" : "major";
+  const firstSegmentRelative = Boolean(firstSegmentKey) && keyIdentity(firstSegmentKey.tonic, firstSegmentKey.mode) === keyIdentity(priorTonic, priorMode) && ranked.some((item) => keyIdentity(item.tonic, item.mode) === keyIdentity(priorTonic, priorMode));
+  const priorScore = firstSegmentRelative ? keyScore(chroma, pitchIndex(priorTonic), priorMode) : Number.NEGATIVE_INFINITY;
+  const firstSegmentPrior = firstSegmentRelative && priorScore >= winnerScore - 0.06;
   const options = disambiguationCandidates(winner).map((candidate) => {
     const tonic = PITCHES[candidate.tonic];
     const rankedCandidate = ranked.find((item) => item.tonic === tonic && item.mode === candidate.mode);
     return { tonic, mode: candidate.mode, score: keyScore(chroma, candidate.tonic, candidate.mode), weight: rankedCandidate?.weight ?? 0, reason: candidate.reason };
   }).sort((a, b) => b.score - a.score);
   const best = options[0];
-  const bestSupport = best?.reason ? ranked.find((item) => item.tonic === best.tonic && item.mode === best.mode) : void 0;
-  const corrected = best.reason && best.score >= winnerScore + 0.03 && bestSupport && bestSupport.weight >= winner.weight * 0.8 ? best : void 0;
+  const corrected = firstSegmentPrior ? {
+    tonic: priorTonic,
+    mode: priorMode,
+    score: priorScore,
+    weight: ranked.find((item) => keyIdentity(item.tonic, item.mode) === keyIdentity(priorTonic, priorMode))?.weight ?? 0,
+    reason: "relative-correction"
+  } : best.reason && best.score >= winnerScore + 0.03 ? best : void 0;
   const selected = corrected ? ranked.find((item) => item.tonic === corrected.tonic && item.mode === corrected.mode) ?? { tonic: corrected.tonic, mode: corrected.mode, weight: corrected.weight, votes: 0, ...keyNames(corrected.tonic, corrected.mode) } : winner;
   const secondWeight = ranked[1]?.weight ?? 0;
   const agreement = totalVotes ? winner.votes / totalVotes : 0;
@@ -6205,7 +6210,7 @@ function estimateKey(essentia, pcm, signal, tuning) {
   const segmentSize = Math.floor(15 * SAMPLE_RATE / HOP_SIZE);
   const votes = /* @__PURE__ */ new Map();
   let totalVotes = 0;
-  const register = (rawKey, rawScale, rawStrength, weightMultiplier = 1) => {
+  const register = (rawKey, rawScale, rawStrength, weightMultiplier = 1, local) => {
     const tonic = normalizedPitch(String(rawKey ?? ""));
     const mode = modeOf(String(rawScale ?? ""));
     const strength = Math.max(0, finiteNumber(rawStrength) ?? 0);
@@ -6216,18 +6221,25 @@ function estimateKey(essentia, pcm, signal, tuning) {
     vote.votes++;
     votes.set(id, vote);
     totalVotes++;
+    if (local) {
+      const localVote = local.get(id) ?? { tonic, mode, weight: 0, votes: 0 };
+      localVote.weight += strength * weightMultiplier;
+      localVote.votes++;
+      local.set(id, localVote);
+    }
   };
   const voteSection = (section, weightMultiplier = 1) => {
-    if (section.length < 4) return;
+    if (section.length < 4) return void 0;
     const mean = Array.from({ length: 36 }, (_, bin) => section.reduce((sum2, frame) => sum2 + frame[bin], 0) / section.length);
-    if (Math.max(...mean) === 0) return;
+    if (Math.max(...mean) === 0) return void 0;
+    const local = /* @__PURE__ */ new Map();
     let pcp;
     try {
       pcp = essentia.arrayToVector(mean);
       for (const profile of PROFILES) {
         const result = essentia.Key(pcp, 4, 36, profile, 0.6, true, true, true);
         try {
-          register(scalar(essentia, result.key), scalar(essentia, result.scale), scalar(essentia, result.strength), weightMultiplier);
+          register(scalar(essentia, result.key), scalar(essentia, result.scale), scalar(essentia, result.strength), weightMultiplier, local);
         } finally {
           dispose(result.key);
           dispose(result.scale);
@@ -6237,15 +6249,18 @@ function estimateKey(essentia, pcm, signal, tuning) {
     } finally {
       dispose(pcp);
     }
+    const top = [...local.values()].sort((a, b) => b.weight - a.weight || b.votes - a.votes)[0];
+    return top ? { tonic: top.tonic, mode: top.mode } : void 0;
   };
+  let firstSegmentKey;
   for (let start = 0; start < frames.length; start += segmentSize) {
     const section = frames.slice(start, start + segmentSize);
     if (section.length < 4) continue;
-    voteSection(section);
+    const sectionKey = voteSection(section);
+    if (start === 0) firstSegmentKey = sectionKey;
   }
-  voteSection(frames.slice(0, Math.ceil(0.75 * SAMPLE_RATE / HOP_SIZE)), 4);
   for (const profile of PROFILES) {
-    const result = essentia.KeyExtractor(signal, true, FRAME_SIZE, HOP_SIZE, 36, 5e3, 60, 25, 0.2, profile, SAMPLE_RATE, 1, tuning, "cosine", "hann");
+    const result = essentia.KeyExtractor(signal, true, FRAME_SIZE, HOP_SIZE, 36, 5e3, 60, 25, 0.2, profile, SAMPLE_RATE, 1e-4, tuning, "cosine", "hann");
     try {
       register(scalar(essentia, result.key), scalar(essentia, result.scale), scalar(essentia, result.strength));
     } finally {
@@ -6265,7 +6280,7 @@ function estimateKey(essentia, pcm, signal, tuning) {
   if (sum > 0) chroma.forEach((value, index) => {
     chroma[index] = value / sum;
   });
-  return buildKeyResult(ranking, chroma, totalVotes);
+  return buildKeyResult(ranking, chroma, totalVotes, firstSegmentKey);
 }
 function buildOnsetEnvelope(pcm) {
   const hopSamples = Math.max(1, Math.round(SAMPLE_RATE * 5e-3));
